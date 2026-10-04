@@ -1,7 +1,7 @@
 # CV Sorting using LLMs — Capstone Project Design
 
 **Date:** 2026-10-04
-**Project ID:** CS02 / HPPCS02 (confirm exact prefix on course portal before final submission)
+**Project ID:** CS02
 **Deadline:** 08 October 2026, 23:59 IST
 
 ## 1. Objective
