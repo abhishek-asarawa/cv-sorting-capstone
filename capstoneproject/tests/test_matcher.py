@@ -81,3 +81,20 @@ def test_score_retry_uses_stricter_prompt_and_warns(monkeypatch, capsys):
     matcher.score_requirement("h", _req(), {"name": "J"}, [("c", [1, 0])])
     assert len(prompts) == 2 and prompts[0] != prompts[1]
     assert "scoring failed" in capsys.readouterr().err
+
+
+def test_score_requirement_uses_supplied_req_vec_without_embedding(monkeypatch):
+    def no_embed(h, t):
+        raise AssertionError("embed must not be called")
+
+    monkeypatch.setattr(matcher.ollama_client, "embed", no_embed)
+    monkeypatch.setattr(matcher.ollama_client, "generate",
+                        lambda h, m, p, json_mode=False: '{"score": 80, "explanation": "ok"}')
+    r = matcher.score_requirement("h", _req(), {"name": "J"}, [("c", [1, 0])], [1, 0])
+    assert r["E"] == 100.0
+
+
+def test_embed_requirements_one_vector_per_requirement(monkeypatch):
+    monkeypatch.setattr(matcher.ollama_client, "embed", lambda h, t: [float(len(t))])
+    out = matcher.embed_requirements("h", [{"text": "ab", "type": "must-have"}, {"text": "abc", "type": "must-have"}])
+    assert out == [[2.0], [3.0]]

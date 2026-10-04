@@ -6,7 +6,8 @@ import requests
 EXTRACTION_MODEL = "llama3.2:3b"
 SCORING_MODEL = "qwen2.5:7b-instruct"
 EMBED_MODEL = "nomic-embed-text"
-TIMEOUT = 300
+TIMEOUT = 120
+NUM_PREDICT = 2048  # hard cap so a looping model cannot run until the timeout
 NUM_CTX = 8192  # Ollama truncates silently past its small default window
 
 
@@ -18,8 +19,10 @@ def _post(host: str, path: str, body: dict) -> dict:
     """POST JSON to Ollama and return the decoded reply, raising OllamaError on any failure."""
     try:
         resp = requests.post(host.rstrip("/") + path, json=body, timeout=TIMEOUT)
-    except requests.RequestException as exc:
-        raise OllamaError("Cannot reach Ollama at %s: %s" % (host, exc))
+    except requests.Timeout:
+        raise OllamaError("Ollama timed out after %ds on %s" % (TIMEOUT, path))
+    except requests.RequestException:
+        raise OllamaError("Cannot reach Ollama at %s - is `ollama serve` running?" % host)
     try:
         data = resp.json()
     except ValueError:
@@ -31,7 +34,8 @@ def _post(host: str, path: str, body: dict) -> dict:
 
 def generate(host: str, model: str, prompt: str, json_mode: bool = False) -> str:
     """Run a non-streaming completion with `model`; json_mode asks Ollama to emit valid JSON."""
-    body = {"model": model, "prompt": prompt, "stream": False, "options": {"temperature": 0, "num_ctx": NUM_CTX}}
+    body = {"model": model, "prompt": prompt, "stream": False, "options": {"temperature": 0, "num_ctx": NUM_CTX,
+                                                                  "num_predict": NUM_PREDICT}}
     if json_mode:
         body["format"] = "json"
     return _post(host, "/api/generate", body)["response"]

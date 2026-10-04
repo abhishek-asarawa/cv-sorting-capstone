@@ -23,12 +23,16 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def list_cv_files(folder: str) -> Tuple[List[str], List[dict]]:
-    """Split a folder's top-level files into CV candidates and skipped (unsupported) files."""
+def list_cv_files(folder: str, exclude: Optional[str] = None) -> Tuple[List[str], List[dict]]:
+    """Split a folder's top-level files into CV candidates and skipped (unsupported) files.
+
+    `exclude` (the JD path) is left out even if it sits inside the CV folder.
+    """
     files, skipped = [], []
+    skip_real = os.path.realpath(exclude) if exclude else None
     for name in sorted(os.listdir(folder)):
         full = os.path.join(folder, name)
-        if name.startswith(".") or not os.path.isfile(full):
+        if name.startswith(".") or not os.path.isfile(full) or os.path.realpath(full) == skip_real:
             continue
         if name.lower().endswith(file_parser.SUPPORTED_EXTENSIONS):
             files.append(full)
@@ -37,51 +41,69 @@ def list_cv_files(folder: str) -> Tuple[List[str], List[dict]]:
     return files, skipped
 
 
-def process_cv(host: str, path: str, requirements: List[dict]) -> dict:
-    """Parse, extract and score one CV; may raise ParseError/ExtractionError (caller skips)."""
-    text = file_parser.parse_file(path)
-    cv = extractor.extract_cv(host, text)
-    if not cv["name"]:
-        cv["name"] = os.path.splitext(os.path.basename(path))[0]
-    chunk_vecs = matcher.embed_cv(host, cv)
-    rows = []
-    for req in requirements:
-        scored = matcher.score_requirement(host, req, cv, chunk_vecs)
-        rows.append(dict(scored, text=req["text"], type=req["type"]))
-    return {"name": cv["name"], "file": os.path.basename(path), "rows": rows}
+def _run_stage(items: list, fn, skipped: List[dict], ollama_errors: List[str]) -> list:
+    """Apply fn(item) to each (path, ...) item; a failing CV is recorded as skipped, never aborts the run."""
+    out = []
+    for item in items:
+        name = os.path.basename(item[0])
+        try:
+            out.append(fn(item))
+        except (file_parser.ParseError, extractor.ExtractionError, ollama_client.OllamaError) as exc:
+            print("Warning: skipping %s: %s" % (name, exc), file=sys.stderr)
+            skipped.append({"file": name, "reason": str(exc)})
+            if isinstance(exc, ollama_client.OllamaError):
+                ollama_errors.append(str(exc))
+    return out
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    """Run the pipeline; return a process exit code."""
+    """Run the pipeline; return a process exit code.
+
+    Work is staged so each Ollama model is loaded once: extract all CVs (3B), embed all (embedder),
+    then score all (7B). The candidate is named after the CV file, not the LLM-extracted name.
+    """
     args = build_parser().parse_args(argv)
     if not os.path.isdir(args.cvs):
         print("Error: CV folder not found: %s" % args.cvs, file=sys.stderr)
         return 1
+    host = args.ollama_host
     try:
-        jd = extractor.extract_jd(args.ollama_host, file_parser.parse_file(args.jd))
+        jd = extractor.extract_jd(host, file_parser.parse_file(args.jd))
     except (file_parser.ParseError, extractor.ExtractionError, ollama_client.OllamaError) as exc:
         print("Error: cannot process job description: %s" % exc, file=sys.stderr)
         return 1
     except OSError as exc:
         print("Error: %s" % exc, file=sys.stderr)
         return 1
-    if not jd["requirements"]:
+    reqs = jd["requirements"]
+    if not reqs:
         print("Error: the job description has no requirements to score against.", file=sys.stderr)
         return 1
 
-    files, skipped = list_cv_files(args.cvs)
-    candidates = []
+    files, skipped = list_cv_files(args.cvs, exclude=args.jd)
     ollama_errors = []
-    for path in files:
-        try:
-            candidates.append(process_cv(args.ollama_host, path, jd["requirements"]))
-        except (file_parser.ParseError, extractor.ExtractionError) as exc:
-            print("Warning: skipping %s: %s" % (os.path.basename(path), exc), file=sys.stderr)
-            skipped.append({"file": os.path.basename(path), "reason": str(exc)})
-        except ollama_client.OllamaError as exc:
-            print("Warning: skipping %s: %s" % (os.path.basename(path), exc), file=sys.stderr)
-            skipped.append({"file": os.path.basename(path), "reason": str(exc)})
-            ollama_errors.append(str(exc))
+    extracted = _run_stage([(p,) for p in files],
+                           lambda it: (it[0], extractor.extract_cv(host, file_parser.parse_file(it[0]))),
+                           skipped, ollama_errors)
+    try:
+        req_vecs = matcher.embed_requirements(host, reqs)
+    except ollama_client.OllamaError as exc:
+        print("Error: %s" % exc, file=sys.stderr)
+        return 1
+    embedded = _run_stage(extracted, lambda it: (it[0], it[1], matcher.embed_cv(host, it[1])),
+                          skipped, ollama_errors)
+
+    def score(item):
+        """Score one embedded CV against every requirement."""
+        path, cv, chunk_vecs = item
+        rows = []
+        for req, rv in zip(reqs, req_vecs):
+            scored = matcher.score_requirement(host, req, cv, chunk_vecs, rv)
+            rows.append(dict(scored, text=req["text"], type=req["type"]))
+        base = os.path.basename(path)
+        return {"name": os.path.splitext(base)[0], "file": base, "rows": rows}
+
+    candidates = _run_stage(embedded, score, skipped, ollama_errors)
     if ollama_errors and not candidates:
         print("Error: %s" % ollama_errors[0], file=sys.stderr)
         return 1

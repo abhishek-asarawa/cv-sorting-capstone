@@ -52,3 +52,20 @@ def test_generate_sets_context_window(monkeypatch):
     monkeypatch.setattr(requests, "post", lambda url, json=None, timeout=None: seen.update(b=json) or FakeResp({"response": "x"}))
     oc.generate("http://h:1", "m", "p")
     assert seen["b"]["options"]["num_ctx"] >= 8192
+
+
+def test_generate_caps_output_tokens(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(requests, "post", lambda url, json=None, timeout=None: seen.update(b=json) or FakeResp({"response": "x"}))
+    oc.generate("http://h:1", "m", "p")
+    assert 0 < seen["b"]["options"]["num_predict"] <= 4096
+
+
+def test_timeout_is_reported_as_timeout_not_unreachable(monkeypatch):
+    def slow(*a, **k):
+        raise requests.ReadTimeout("slow")
+
+    monkeypatch.setattr(requests, "post", slow)
+    with pytest.raises(oc.OllamaError, match="timed out") as ei:
+        oc.generate("http://h:1", "m", "p")
+    assert "Cannot reach" not in str(ei.value)

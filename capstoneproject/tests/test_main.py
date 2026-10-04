@@ -11,12 +11,11 @@ def _fake_pipeline(monkeypatch):
         "role_title": "Dev", "requirements": [{"text": "Python", "type": "must-have"},
                                               {"text": "Docker", "type": "nice-to-have"}]})
     monkeypatch.setattr(m.extractor, "extract_cv",
-                        lambda h, t: {"name": "" if "anon" in t else t.split()[0], "skills": ["x"],
-                                      "experience": [], "education": []})
+                        lambda h, t: {"skills": ["x"], "experience": [], "education": []})
     monkeypatch.setattr(m.matcher, "embed_cv", lambda h, cv: [])
+    monkeypatch.setattr(m.matcher, "embed_requirements", lambda h, reqs: [[1.0] for _ in reqs])
     monkeypatch.setattr(m.matcher, "score_requirement",
-                        lambda h, req, cv, vecs: {"L": 50.0, "E": 50.0, "S": 50.0 + len(cv["name"]),
-                                                  "explanation": "e"})
+                        lambda h, req, cv, vecs, rv=None: {"L": 50.0, "E": 50.0, "S": 50.0, "explanation": "e"})
 
 
 def _setup(tmp_path):
@@ -41,13 +40,13 @@ def test_end_to_end(tmp_path, monkeypatch, capsys):
     code = m.main(["--cvs", str(cvs), "--jd", str(jd), "--output", str(out)])
     assert code == 0
     text = capsys.readouterr().out
-    assert "Bobby" in text and "alice" in text.lower()
+    assert "bobby" in text and "alice" in text
     assert "empty.txt" in text and "notes.docx" in text
     assert ".DS_Store" not in text and "subdir" not in text
     rows = list(csv.DictReader(open(str(out), newline="")))
     assert sorted(r["file"] for r in rows if r["section"] == "skipped") == ["empty.txt", "notes.docx"]
     names = [r["candidate"] for r in rows if r["section"] == "summary"]
-    assert "anon" in names  # empty extracted name falls back to filename
+    assert sorted(names) == ["alice", "anon", "bobby"]  # candidate = CV file name
 
 
 def test_ollama_down_gives_clean_error(tmp_path, monkeypatch, capsys):
@@ -79,7 +78,7 @@ def test_extraction_failure_skips_cv_not_run(tmp_path, monkeypatch, capsys):
     def flaky(h, t):
         if "Bobby" in t:
             raise m.extractor.ExtractionError("extraction failed")
-        return {"name": "Alice", "skills": [], "experience": [], "education": []}
+        return {"skills": ["a"], "experience": [], "education": []}
 
     monkeypatch.setattr(m.extractor, "extract_cv", flaky)
     cvs, jd = _setup(tmp_path)
@@ -112,7 +111,7 @@ def test_per_cv_ollama_error_skips_that_cv_only(tmp_path, monkeypatch, capsys):
     def flaky(h, t):
         if "Bobby" in t:
             raise ollama_client.OllamaError("timed out")
-        return {"name": "Alice", "skills": [], "experience": [], "education": []}
+        return {"skills": ["a"], "experience": [], "education": []}
 
     monkeypatch.setattr(m.extractor, "extract_cv", flaky)
     cvs, jd = _setup(tmp_path)
@@ -131,3 +130,27 @@ def test_all_cvs_failing_with_ollama_error_exits_1(tmp_path, monkeypatch, capsys
     cvs, jd = _setup(tmp_path)
     assert m.main(["--cvs", str(cvs), "--jd", str(jd), "--output", str(tmp_path / "o.csv")]) == 1
     assert "Cannot reach Ollama" in capsys.readouterr().err
+
+
+def test_jd_file_inside_cv_folder_is_not_scored_as_cv(tmp_path, monkeypatch, capsys):
+    _fake_pipeline(monkeypatch)
+    cvs, jd = _setup(tmp_path)
+    inside = cvs / "job-description.txt"
+    inside.write_text("Need Python")
+    out = tmp_path / "o.csv"
+    assert m.main(["--cvs", str(cvs), "--jd", str(inside), "--output", str(out)]) == 0
+    rows = list(csv.DictReader(open(str(out), newline="")))
+    assert "job-description.txt" not in [r["file"] for r in rows]
+
+
+def test_all_cvs_extracted_before_any_scoring(tmp_path, monkeypatch):
+    _fake_pipeline(monkeypatch)
+    order = []
+    monkeypatch.setattr(m.extractor, "extract_cv",
+                        lambda h, t: order.append("extract") or {"skills": ["x"], "experience": [], "education": []})
+    monkeypatch.setattr(m.matcher, "score_requirement",
+                        lambda h, req, cv, vecs, rv=None: order.append("score") or
+                        {"L": 1.0, "E": 1.0, "S": 1.0, "explanation": "e"})
+    cvs, jd = _setup(tmp_path)
+    m.main(["--cvs", str(cvs), "--jd", str(jd), "--output", str(tmp_path / "o.csv")])
+    assert order.index("score") > max(i for i, x in enumerate(order) if x == "extract")

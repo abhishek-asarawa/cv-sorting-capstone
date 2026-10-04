@@ -76,9 +76,16 @@ def _prompt(req: dict, cv: dict, e_score: float) -> str:
             % (req["type"], req["text"], e_score, "\n".join(cv_chunks(cv)) or "(no details)"))
 
 
-def score_requirement(host: str, req: dict, cv: dict, chunk_vecs) -> dict:
-    """Return {L, E, S, explanation} for one requirement against one candidate."""
-    e_score = similarity_score(ollama_client.embed(host, req["text"]), chunk_vecs)
+def embed_requirements(host: str, reqs: List[dict]) -> List[List[float]]:
+    """Embed every JD requirement once so the vectors are reused for all CVs."""
+    return [ollama_client.embed(host, r["text"]) for r in reqs]
+
+
+def score_requirement(host: str, req: dict, cv: dict, chunk_vecs, req_vec=None) -> dict:
+    """Return {L, E, S, explanation} for one requirement; embeds the requirement if req_vec is None."""
+    if req_vec is None:
+        req_vec = ollama_client.embed(host, req["text"])
+    e_score = similarity_score(req_vec, chunk_vecs)
     llm_score, why = 0.0, "scoring failed"
     for attempt in range(2):
         prompt = _prompt(req, cv, e_score) + (STRICT if attempt else "")

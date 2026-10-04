@@ -46,17 +46,16 @@ def test_extract_fails_after_retry(monkeypatch):
 
 
 def test_extract_cv_fills_missing_fields(monkeypatch):
-    _patch(monkeypatch, ['{"name": "Jane", "skills": "Python"}'])
+    _patch(monkeypatch, ['{"skills": "Python"}'])
     cv = extract_cv("h", "t")
-    assert cv["name"] == "Jane"
+    assert "name" not in cv
     assert cv["skills"] == ["Python"]
     assert cv["experience"] == [] and cv["education"] == []
 
 
 def test_extract_cv_ignores_non_dict_entries(monkeypatch):
-    _patch(monkeypatch, ['{"name": null, "skills": ["a", 3], "experience": ["oops", {"title": "Eng"}], "education": []}'])
+    _patch(monkeypatch, ['{"skills": ["a", 3], "experience": ["oops", {"title": "Eng"}], "education": []}'])
     cv = extract_cv("h", "t")
-    assert cv["name"] == ""
     assert cv["skills"] == ["a", "3"]
     assert cv["experience"] == [{"title": "Eng", "company": "", "duration": "", "description": ""}]
 
@@ -75,3 +74,23 @@ def test_jd_string_requirements_accepted(monkeypatch):
 def test_jd_non_list_requirements_does_not_crash(monkeypatch):
     _patch(monkeypatch, ['{"role_title":"D","requirements":5}'])
     assert extract_jd("h", "t")["requirements"] == []
+
+
+PLACEHOLDER_CV = '{"skills": ["string"], "experience": [{"title": "string", "company": "", "duration": "", "description": ""}], "education": []}'
+
+
+def test_cv_that_only_echoes_schema_placeholders_fails_after_retry(monkeypatch):
+    calls = _patch(monkeypatch, [PLACEHOLDER_CV])
+    with pytest.raises(ExtractionError, match="extraction failed"):
+        extract_cv("h", "t")
+    assert len(calls) == 2
+
+
+def test_cv_placeholder_retry_can_recover(monkeypatch):
+    _patch(monkeypatch, [PLACEHOLDER_CV, '{"skills": ["Python"]}'])
+    assert extract_cv("h", "t")["skills"] == ["Python"]
+
+
+def test_placeholders_dropped_next_to_real_values(monkeypatch):
+    _patch(monkeypatch, ['{"skills": ["string", "SQL", "N/A"], "experience": [], "education": []}'])
+    assert extract_cv("h", "t")["skills"] == ["SQL"]
