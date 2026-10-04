@@ -1,0 +1,13 @@
+Setup (once):
+  pip install requests pdfplumber
+  ollama pull llama3.2:3b && ollama pull qwen2.5:7b-instruct && ollama pull nomic-embed-text
+  (Ollama must be running: http://localhost:11434)
+
+Run:
+  python main.py --cvs <cv_folder> --jd <jd_file> [--output results.csv] [--ollama-host http://localhost:11434]
+
+Example:
+  python main.py --cvs ./cvs --jd ./job_description.txt --output results.csv
+
+Input:  CV folder of .pdf/.txt files; JD as a .pdf/.txt file.
+Output: ranked table on console; results.csv (requirement rows, per-candidate summary rows, skipped files).

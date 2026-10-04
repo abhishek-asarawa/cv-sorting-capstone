@@ -1,0 +1,98 @@
+import csv
+import os
+import main as m
+import ollama_client
+from file_parser import ParseError
+
+
+def _fake_pipeline(monkeypatch):
+    """Replace every Ollama-touching call with deterministic fakes."""
+    monkeypatch.setattr(m.extractor, "extract_jd", lambda h, t: {
+        "role_title": "Dev", "requirements": [{"text": "Python", "type": "must-have"},
+                                              {"text": "Docker", "type": "nice-to-have"}]})
+    monkeypatch.setattr(m.extractor, "extract_cv",
+                        lambda h, t: {"name": "" if "anon" in t else t.split()[0], "skills": ["x"],
+                                      "experience": [], "education": []})
+    monkeypatch.setattr(m.matcher, "embed_cv", lambda h, cv: [])
+    monkeypatch.setattr(m.matcher, "score_requirement",
+                        lambda h, req, cv, vecs: {"L": 50.0, "E": 50.0, "S": 50.0 + len(cv["name"]),
+                                                  "explanation": "e"})
+
+
+def _setup(tmp_path):
+    cvs = tmp_path / "cvs"
+    cvs.mkdir()
+    (cvs / "alice.txt").write_text("Alice python")
+    (cvs / "bobby.txt").write_text("Bobby python")
+    (cvs / "anon.txt").write_text("anon python")
+    (cvs / "empty.txt").write_text("")
+    (cvs / ".DS_Store").write_bytes(b"x")
+    (cvs / "notes.docx").write_text("x")
+    (cvs / "subdir").mkdir()
+    jd = tmp_path / "jd.txt"
+    jd.write_text("Need Python")
+    return cvs, jd
+
+
+def test_end_to_end(tmp_path, monkeypatch, capsys):
+    _fake_pipeline(monkeypatch)
+    cvs, jd = _setup(tmp_path)
+    out = tmp_path / "r.csv"
+    code = m.main(["--cvs", str(cvs), "--jd", str(jd), "--output", str(out)])
+    assert code == 0
+    text = capsys.readouterr().out
+    assert "Bobby" in text and "alice" in text.lower()
+    assert "empty.txt" in text and "notes.docx" in text
+    assert ".DS_Store" not in text and "subdir" not in text
+    rows = list(csv.DictReader(open(str(out), newline="")))
+    assert sorted(r["file"] for r in rows if r["section"] == "skipped") == ["empty.txt", "notes.docx"]
+    names = [r["candidate"] for r in rows if r["section"] == "summary"]
+    assert "anon" in names  # empty extracted name falls back to filename
+
+
+def test_ollama_down_gives_clean_error(tmp_path, monkeypatch, capsys):
+    cvs, jd = _setup(tmp_path)
+
+    def boom(h, t):
+        raise ollama_client.OllamaError("Cannot reach Ollama at x")
+
+    monkeypatch.setattr(m.extractor, "extract_jd", boom)
+    assert m.main(["--cvs", str(cvs), "--jd", str(jd)]) == 1
+    assert "Cannot reach Ollama" in capsys.readouterr().err
+
+
+def test_jd_without_requirements_exits_1(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(m.extractor, "extract_jd", lambda h, t: {"role_title": "x", "requirements": []})
+    cvs, jd = _setup(tmp_path)
+    assert m.main(["--cvs", str(cvs), "--jd", str(jd)]) == 1
+    assert "no requirements" in capsys.readouterr().err.lower()
+
+
+def test_missing_paths_exit_1(tmp_path, capsys):
+    assert m.main(["--cvs", str(tmp_path / "nope"), "--jd", str(tmp_path / "jd.txt")]) == 1
+    assert "error" in capsys.readouterr().err.lower()
+
+
+def test_extraction_failure_skips_cv_not_run(tmp_path, monkeypatch, capsys):
+    _fake_pipeline(monkeypatch)
+
+    def flaky(h, t):
+        if "Bobby" in t:
+            raise m.extractor.ExtractionError("extraction failed")
+        return {"name": "Alice", "skills": [], "experience": [], "education": []}
+
+    monkeypatch.setattr(m.extractor, "extract_cv", flaky)
+    cvs, jd = _setup(tmp_path)
+    assert m.main(["--cvs", str(cvs), "--jd", str(jd), "--output", str(tmp_path / "o.csv")]) == 0
+    assert "extraction failed" in capsys.readouterr().out
+
+
+def test_empty_candidate_list_still_writes_csv(tmp_path, monkeypatch):
+    _fake_pipeline(monkeypatch)
+    cvs = tmp_path / "cvs"
+    cvs.mkdir()
+    jd = tmp_path / "jd.txt"
+    jd.write_text("Need Python")
+    out = tmp_path / "o.csv"
+    assert m.main(["--cvs", str(cvs), "--jd", str(jd), "--output", str(out)]) == 0
+    assert os.path.exists(str(out))
