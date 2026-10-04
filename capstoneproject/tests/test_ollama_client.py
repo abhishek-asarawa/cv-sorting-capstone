@@ -1,0 +1,47 @@
+import pytest
+import requests
+import ollama_client as oc
+
+
+class FakeResp:
+    def __init__(self, data, status=200):
+        self._d, self.status_code = data, status
+        self.text = str(data)
+
+    def json(self):
+        return self._d
+
+
+def test_generate_returns_response_text(monkeypatch):
+    seen = {}
+
+    def fake_post(url, json=None, timeout=None):
+        seen.update(url=url, body=json)
+        return FakeResp({"response": "hello"})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    out = oc.generate("http://h:1", "m", "p", json_mode=True)
+    assert out == "hello"
+    assert seen["url"] == "http://h:1/api/generate"
+    assert seen["body"]["model"] == "m" and seen["body"]["stream"] is False
+    assert seen["body"]["format"] == "json"
+
+
+def test_embed_returns_vector(monkeypatch):
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResp({"embeddings": [[0.1, 0.2]]}))
+    assert oc.embed("http://h:1", "x") == [0.1, 0.2]
+
+
+def test_connection_error_becomes_ollama_error(monkeypatch):
+    def boom(*a, **k):
+        raise requests.ConnectionError("down")
+
+    monkeypatch.setattr(requests, "post", boom)
+    with pytest.raises(oc.OllamaError, match="Cannot reach Ollama"):
+        oc.generate("http://h:1", "m", "p")
+
+
+def test_http_error_status_becomes_ollama_error(monkeypatch):
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResp({"error": "model not found"}, 404))
+    with pytest.raises(oc.OllamaError, match="model not found"):
+        oc.generate("http://h:1", "m", "p")
