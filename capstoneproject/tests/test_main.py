@@ -154,3 +154,20 @@ def test_all_cvs_extracted_before_any_scoring(tmp_path, monkeypatch):
     cvs, jd = _setup(tmp_path)
     m.main(["--cvs", str(cvs), "--jd", str(jd), "--output", str(tmp_path / "o.csv")])
     assert order.index("score") > max(i for i, x in enumerate(order) if x == "extract")
+
+
+def test_model_flags_override_defaults(tmp_path, monkeypatch):
+    _fake_pipeline(monkeypatch)
+    monkeypatch.setattr(ollama_client, "EXTRACTION_MODEL", ollama_client.EXTRACTION_MODEL)
+    monkeypatch.setattr(ollama_client, "SCORING_MODEL", ollama_client.SCORING_MODEL)
+    cvs, jd = _setup(tmp_path)
+    m.main(["--cvs", str(cvs), "--jd", str(jd), "--output", str(tmp_path / "o.csv"),
+            "--extract-model", "tiny-x", "--score-model", "tiny-s"])
+    assert ollama_client.EXTRACTION_MODEL == "tiny-x" and ollama_client.SCORING_MODEL == "tiny-s"
+
+
+def test_model_defaults_unchanged_without_flags(tmp_path, monkeypatch):
+    _fake_pipeline(monkeypatch)
+    cvs, jd = _setup(tmp_path)
+    m.main(["--cvs", str(cvs), "--jd", str(jd), "--output", str(tmp_path / "o.csv")])
+    assert ollama_client.EXTRACTION_MODEL == "llama3.2:3b" and ollama_client.SCORING_MODEL == "qwen2.5:7b-instruct"

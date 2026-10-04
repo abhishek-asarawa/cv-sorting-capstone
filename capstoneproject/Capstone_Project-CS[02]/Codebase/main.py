@@ -20,6 +20,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--jd", required=True, help="job description file (.pdf / .txt)")
     p.add_argument("--output", default="results.csv", help="CSV output path (default: results.csv)")
     p.add_argument("--ollama-host", default=DEFAULT_HOST, help="Ollama base URL")
+    p.add_argument("--extract-model", default=ollama_client.EXTRACTION_MODEL,
+                   help="Ollama model that structures CV/JD text (default: %(default)s)")
+    p.add_argument("--score-model", default=ollama_client.SCORING_MODEL,
+                   help="Ollama model that scores each requirement (default: %(default)s)")
     return p
 
 
@@ -67,6 +71,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("Error: CV folder not found: %s" % args.cvs, file=sys.stderr)
         return 1
     host = args.ollama_host
+    ollama_client.EXTRACTION_MODEL = args.extract_model
+    ollama_client.SCORING_MODEL = args.score_model
     try:
         jd = extractor.extract_jd(host, file_parser.parse_file(args.jd))
     except (file_parser.ParseError, extractor.ExtractionError, ollama_client.OllamaError) as exc:
