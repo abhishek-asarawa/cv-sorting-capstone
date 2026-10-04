@@ -1,5 +1,6 @@
 """Per-requirement matching: embedding similarity (E) + scoring-LLM judgement (L) -> S."""
 import math
+import sys
 from typing import List, Tuple
 
 import ollama_client
@@ -7,6 +8,7 @@ from extractor import parse_json_loose
 
 LLM_WEIGHT = 0.6
 EMBED_WEIGHT = 0.4
+STRICT = "\nReturn ONLY one JSON object with a numeric \"score\" between 0 and 100. No other text."
 
 
 def cosine(a: List[float], b: List[float]) -> float:
@@ -78,12 +80,15 @@ def score_requirement(host: str, req: dict, cv: dict, chunk_vecs) -> dict:
     """Return {L, E, S, explanation} for one requirement against one candidate."""
     e_score = similarity_score(ollama_client.embed(host, req["text"]), chunk_vecs)
     llm_score, why = 0.0, "scoring failed"
-    for _ in range(2):
-        raw = ollama_client.generate(host, ollama_client.SCORING_MODEL, _prompt(req, cv, e_score), json_mode=True)
+    for attempt in range(2):
+        prompt = _prompt(req, cv, e_score) + (STRICT if attempt else "")
+        raw = ollama_client.generate(host, ollama_client.SCORING_MODEL, prompt, json_mode=True)
         try:
             llm_score, why = parse_llm_score(raw)
             break
         except ValueError:
             continue
+    else:
+        print("Warning: scoring failed for requirement '%s'; using L=0" % req["text"], file=sys.stderr)
     return {"L": round(llm_score, 1), "E": round(e_score, 1),
             "S": round(combine(llm_score, e_score), 1), "explanation": why}

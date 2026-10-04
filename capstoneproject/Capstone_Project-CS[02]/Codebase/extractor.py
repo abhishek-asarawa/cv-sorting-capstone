@@ -59,7 +59,10 @@ def extract_jd(host: str, text: str) -> dict:
               "Keep each requirement short.\nSchema: %s\n\nJOB DESCRIPTION:\n%s" % (JD_SCHEMA, text))
     data = _call(host, prompt)
     reqs = []
-    for r in data.get("requirements") or []:
+    items = data.get("requirements")
+    for r in items if isinstance(items, list) else []:
+        if isinstance(r, str):
+            r = {"text": r, "type": "must-have"}
         if not isinstance(r, dict) or not _s(r.get("text")):
             continue
         kind = "nice-to-have" if any(w in _s(r.get("type")).lower() for w in NICE_WORDS) else "must-have"

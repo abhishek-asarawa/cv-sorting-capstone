@@ -7,6 +7,7 @@ EXTRACTION_MODEL = "llama3.2:3b"
 SCORING_MODEL = "qwen2.5:7b-instruct"
 EMBED_MODEL = "nomic-embed-text"
 TIMEOUT = 300
+NUM_CTX = 8192  # Ollama truncates silently past its small default window
 
 
 class OllamaError(Exception):
@@ -30,7 +31,7 @@ def _post(host: str, path: str, body: dict) -> dict:
 
 def generate(host: str, model: str, prompt: str, json_mode: bool = False) -> str:
     """Run a non-streaming completion with `model`; json_mode asks Ollama to emit valid JSON."""
-    body = {"model": model, "prompt": prompt, "stream": False, "options": {"temperature": 0}}
+    body = {"model": model, "prompt": prompt, "stream": False, "options": {"temperature": 0, "num_ctx": NUM_CTX}}
     if json_mode:
         body["format"] = "json"
     return _post(host, "/api/generate", body)["response"]

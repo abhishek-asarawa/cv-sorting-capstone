@@ -71,3 +71,13 @@ def test_embed_cv_embeds_each_chunk(monkeypatch):
     monkeypatch.setattr(matcher.ollama_client, "embed", lambda h, t: [float(len(t))])
     out = matcher.embed_cv("h", {"name": "", "skills": ["Py"], "experience": [], "education": []})
     assert len(out) == 1 and out[0][0].startswith("Skills")
+
+
+def test_score_retry_uses_stricter_prompt_and_warns(monkeypatch, capsys):
+    prompts = []
+    monkeypatch.setattr(matcher.ollama_client, "embed", lambda h, t: [1, 0])
+    monkeypatch.setattr(matcher.ollama_client, "generate",
+                        lambda h, m, p, json_mode=False: prompts.append(p) or "garbage")
+    matcher.score_requirement("h", _req(), {"name": "J"}, [("c", [1, 0])])
+    assert len(prompts) == 2 and prompts[0] != prompts[1]
+    assert "scoring failed" in capsys.readouterr().err

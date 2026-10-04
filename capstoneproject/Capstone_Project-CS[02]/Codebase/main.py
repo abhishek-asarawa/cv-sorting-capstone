@@ -71,6 +71,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     files, skipped = list_cv_files(args.cvs)
     candidates = []
+    ollama_errors = []
     for path in files:
         try:
             candidates.append(process_cv(args.ollama_host, path, jd["requirements"]))
@@ -78,11 +79,19 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("Warning: skipping %s: %s" % (os.path.basename(path), exc), file=sys.stderr)
             skipped.append({"file": os.path.basename(path), "reason": str(exc)})
         except ollama_client.OllamaError as exc:
-            print("Error: %s" % exc, file=sys.stderr)
-            return 1
+            print("Warning: skipping %s: %s" % (os.path.basename(path), exc), file=sys.stderr)
+            skipped.append({"file": os.path.basename(path), "reason": str(exc)})
+            ollama_errors.append(str(exc))
+    if ollama_errors and not candidates:
+        print("Error: %s" % ollama_errors[0], file=sys.stderr)
+        return 1
     ranked = ranker.rank(candidates)
     print(ranker.format_console(ranked, skipped))
-    ranker.write_csv(args.output, ranked, skipped)
+    try:
+        ranker.write_csv(args.output, ranked, skipped)
+    except OSError as exc:
+        print("Error: cannot write output file %s: %s" % (args.output, exc), file=sys.stderr)
+        return 1
     print("\nFull results written to %s" % args.output)
     return 0
 

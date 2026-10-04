@@ -64,3 +64,14 @@ def test_extract_cv_ignores_non_dict_entries(monkeypatch):
 def test_jd_with_zero_requirements_returns_empty_list(monkeypatch):
     _patch(monkeypatch, ['{"role_title":"D","requirements":[]}'])
     assert extract_jd("h", "t")["requirements"] == []
+
+
+def test_jd_string_requirements_accepted(monkeypatch):
+    _patch(monkeypatch, ['{"role_title":"D","requirements":["Python","SQL"]}'])
+    assert extract_jd("h", "t")["requirements"] == [{"text": "Python", "type": "must-have"},
+                                                    {"text": "SQL", "type": "must-have"}]
+
+
+def test_jd_non_list_requirements_does_not_crash(monkeypatch):
+    _patch(monkeypatch, ['{"role_title":"D","requirements":5}'])
+    assert extract_jd("h", "t")["requirements"] == []

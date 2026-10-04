@@ -45,3 +45,10 @@ def test_http_error_status_becomes_ollama_error(monkeypatch):
     monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResp({"error": "model not found"}, 404))
     with pytest.raises(oc.OllamaError, match="model not found"):
         oc.generate("http://h:1", "m", "p")
+
+
+def test_generate_sets_context_window(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(requests, "post", lambda url, json=None, timeout=None: seen.update(b=json) or FakeResp({"response": "x"}))
+    oc.generate("http://h:1", "m", "p")
+    assert seen["b"]["options"]["num_ctx"] >= 8192

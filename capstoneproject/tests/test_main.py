@@ -96,3 +96,38 @@ def test_empty_candidate_list_still_writes_csv(tmp_path, monkeypatch):
     out = tmp_path / "o.csv"
     assert m.main(["--cvs", str(cvs), "--jd", str(jd), "--output", str(out)]) == 0
     assert os.path.exists(str(out))
+
+
+def test_unwritable_output_gives_clean_error(tmp_path, monkeypatch, capsys):
+    _fake_pipeline(monkeypatch)
+    cvs, jd = _setup(tmp_path)
+    bad = tmp_path / "no" / "such" / "dir" / "o.csv"
+    assert m.main(["--cvs", str(cvs), "--jd", str(jd), "--output", str(bad)]) == 1
+    assert "output" in capsys.readouterr().err.lower()
+
+
+def test_per_cv_ollama_error_skips_that_cv_only(tmp_path, monkeypatch, capsys):
+    _fake_pipeline(monkeypatch)
+
+    def flaky(h, t):
+        if "Bobby" in t:
+            raise ollama_client.OllamaError("timed out")
+        return {"name": "Alice", "skills": [], "experience": [], "education": []}
+
+    monkeypatch.setattr(m.extractor, "extract_cv", flaky)
+    cvs, jd = _setup(tmp_path)
+    out = tmp_path / "o.csv"
+    assert m.main(["--cvs", str(cvs), "--jd", str(jd), "--output", str(out)]) == 0
+    assert "timed out" in capsys.readouterr().out and os.path.exists(str(out))
+
+
+def test_all_cvs_failing_with_ollama_error_exits_1(tmp_path, monkeypatch, capsys):
+    _fake_pipeline(monkeypatch)
+
+    def down(h, t):
+        raise ollama_client.OllamaError("Cannot reach Ollama")
+
+    monkeypatch.setattr(m.extractor, "extract_cv", down)
+    cvs, jd = _setup(tmp_path)
+    assert m.main(["--cvs", str(cvs), "--jd", str(jd), "--output", str(tmp_path / "o.csv")]) == 1
+    assert "Cannot reach Ollama" in capsys.readouterr().err
